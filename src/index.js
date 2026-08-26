@@ -1,4 +1,31 @@
-const TARGET_URL = "https://toonstream.dad/home/";
+const ORIGIN = "https://toonstream.vip";
+const DEFAULT_HOME_PATH = "/home/";
+
+function buildUpstreamUrl(pathname, search = "") {
+  if (pathname === "/home" || pathname === "/home/") {
+    return `${ORIGIN}${DEFAULT_HOME_PATH}${search}`;
+  }
+
+  if (pathname === "/api/home" || pathname === "/api/home-json") {
+    return `${ORIGIN}${DEFAULT_HOME_PATH}${search}`;
+  }
+
+  if (pathname.startsWith("/api/")) {
+    const upstreamPath = pathname.slice(4);
+    return `${ORIGIN}${upstreamPath}${search}`;
+  }
+
+  return `${ORIGIN}${pathname}${search}`;
+}
+
+function rewriteHtml(html) {
+  return html
+    .replaceAll(`${ORIGIN}/`, "/")
+    .replace(/(href|src|action)=(['"])\/(?!\/)/g, '$1=$2/api/')
+    .replace(/url\((['"]?)\/(?!\/)/g, 'url($1/api/')
+    .replaceAll('"/api/api/', '"/api/')
+    .replaceAll("'/api/api/", "'/api/");
+}
 
 function corsHeaders() {
   return {
@@ -46,48 +73,60 @@ export default {
         service: "toonstream-home-proxy",
         endpoints: {
           html: "/api/home",
-          json: "/api/home-json"
+          json: "/api/home-json",
+          episodeExample: "/api/episode/the-ramparts-of-ice-1x7/"
         }
       });
     }
 
-    if (url.pathname !== "/api/home" && url.pathname !== "/api/home-json") {
+    if (!url.pathname.startsWith("/api/")) {
       return jsonResponse(
         {
           ok: false,
-          message: "Route not found. Use /api/home or /api/home-json"
+          message: "Route not found. Use /api/home, /api/home-json, or /api/..."
         },
         404
       );
     }
 
     try {
-      const upstreamResponse = await fetch(TARGET_URL, {
+      const upstreamUrl = buildUpstreamUrl(url.pathname, url.search);
+
+      const upstreamResponse = await fetch(upstreamUrl, {
         method: "GET",
         headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; ToonstreamCloudflareWorker/1.0)",
-          Accept: "text/html,application/xhtml+xml"
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+          Referer: `${ORIGIN}/`,
+          "Sec-Fetch-Dest": "document",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "same-origin",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         }
       });
 
-      const html = await upstreamResponse.text();
+      const contentType = upstreamResponse.headers.get("content-type") || "";
+      const bodyText = await upstreamResponse.text();
 
-      if (url.pathname === "/api/home") {
-        return new Response(html, {
-          status: upstreamResponse.status,
-          headers: {
-            "Content-Type": "text/html; charset=utf-8",
-            "X-Upstream-Status": String(upstreamResponse.status),
-            ...corsHeaders()
-          }
+      if (url.pathname === "/api/home-json") {
+        return jsonResponse({
+          ok: upstreamResponse.ok,
+          source: upstreamUrl,
+          upstreamStatus: upstreamResponse.status,
+          html: bodyText
         });
       }
 
-      return jsonResponse({
-        ok: upstreamResponse.ok,
-        source: TARGET_URL,
-        upstreamStatus: upstreamResponse.status,
-        html
+      return new Response(contentType.includes("text/html") ? rewriteHtml(bodyText) : bodyText, {
+        status: upstreamResponse.status,
+        headers: {
+          "Content-Type": contentType || "text/plain; charset=utf-8",
+          "X-Upstream-Status": String(upstreamResponse.status),
+          "X-Upstream-Url": upstreamUrl,
+          ...corsHeaders()
+        }
       });
     } catch (error) {
       return jsonResponse(
