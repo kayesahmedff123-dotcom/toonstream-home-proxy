@@ -1,4 +1,4 @@
-const ORIGIN = "https://toonstream.vip";
+const ORIGIN = "https://toonstream.us";
 const DEFAULT_HOME_PATH = "/home/";
 
 function buildUpstreamUrl(pathname, search = "") {
